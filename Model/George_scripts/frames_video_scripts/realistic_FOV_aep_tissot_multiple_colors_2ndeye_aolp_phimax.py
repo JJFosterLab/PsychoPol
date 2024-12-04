@@ -49,9 +49,13 @@ def main(image_path, output_path, azimuth_list, elevation_list, color_value_list
                 proj_x2 = proj_x - 2*(proj_x-center_x)
             elif proj_x < center_x:
                 proj_x2 = proj_x + 2*(center_x-proj_x)
-
-            slope = -(proj_y - center_y)/(proj_x2 - center_x) # mirrored ommatidia should have the same phi_max, that's why we do negative slope, to match the other eye
-            
+                
+            # Handle the case where proj_x is equal to center_x 
+            if proj_x == center_x:
+                slope = np.inf if proj_y > center_y else -np.inf  # Set slope to positive or negative infinity
+            else:
+                slope = -(proj_y - center_y) / (proj_x2 - center_x)  # Calculate slope as usual, mirrored ommatidia should have the same phi_max, that's why we do negative slope, to match the other eye
+                
             # Append azimuth, elevation, and slope to the data array
             data_array[i, 0] = azimuth_deg
             data_array[i, 1] = elevation_deg
@@ -84,10 +88,10 @@ def main(image_path, output_path, azimuth_list, elevation_list, color_value_list
         max_slope = np.max(data_array[:, 2])
 
         # Map slope values to the range [0, 180] for the 4th column
-        data_array[:, 3] = data_array[:,0] + 90 # phi max perpendicular to ommatidium's azimuth
+        data_array[:, 3] = data_array[:,0] + 90 # phi max equal to ommatidium's azimuth
 
-        # Calculate phi_max_2 as phi_max + 90
-        data_array[:, 4] = data_array[:, 3] + 90
+        # Calculate phi_max_2 as as equal to ommatidium azimuth
+        data_array[:, 4] = data_array[:, 0]
         
         # Convert data array to NumPy array
         data_array = np.array(data_array)
