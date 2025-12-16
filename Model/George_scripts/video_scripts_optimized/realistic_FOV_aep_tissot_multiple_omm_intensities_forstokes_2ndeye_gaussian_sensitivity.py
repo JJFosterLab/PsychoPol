@@ -57,15 +57,16 @@ def process_line(args): # this function processes each line in the text file wit
         distance_matrix = spherical_distance(x + center_x, y + center_y, proj_x2, proj_y, center_x, center_y)
         distance_matrix = np.degrees(distance_matrix)
         
-        distance_matrix = np.where(distance_matrix > 50, 50, distance_matrix) # replace values greater than 50 with 50; do this for consistency with ephys data
+        #distance_matrix = np.where(distance_matrix > 50, 50, distance_matrix) # replace values greater than 50 with 50; do this for consistency with ephys data
 
-        sigma = 2.3184 * img_width / 180 # change this if different relative sensitivity, in pixels (the first number is the degrees)
+        sigma = 2.3184 # change this if different relative sensitivity
         gaussian_array = scipy.stats.norm.pdf(distance_matrix, loc=0, scale=sigma) # create 2-D gaussian array, location 0 to have the max value at the coordinates of the ommatidium
+        gaussian_array /= np.max(gaussian_array) # divides every element in the gaussian_array by the maximum value; normalization
         gaussian_array = np.where(gaussian_array < 0.0025, 0, gaussian_array) # round down any value that might be above below 0.0025 (50deg of the ephys data sensitivity)
-
+        
         gaussian_array[(x)**2 + (y)**2 > center_x**2] = 0 # set values outside the circular region to 0
 
-        gaussian_array /= np.max(gaussian_array) # divides every element in the gaussian_array by the maximum value; normalization
+        
         
         result = np.multiply(img, gaussian_array) # multiply the original img with the gaussian array
         return np.sum(result) # get the intensity of all pixels covered by the ommatidium
@@ -73,7 +74,7 @@ def process_line(args): # this function processes each line in the text file wit
         print(f"An error occurred: {str(e)}")
         return 0
 
-def main(image_path, coordinates_file, minor_axis, rotation_angle):
+def main(image_path, coordinates_file, minor_axis, rotation_angle, threads):
     try:
 
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE) # input image (has to be square, its center should be the center of the circular sky image)         
@@ -90,7 +91,7 @@ def main(image_path, coordinates_file, minor_axis, rotation_angle):
         with open(coordinates_file, 'r') as file:
             lines = file.readlines()
             args_list = [(line, img, img_width, img_height, center_x, center_y, minor_axis) for line in lines]
-            with Pool() as pool: # parallel processing the process_line function for each ommatidium
+            with Pool(processes=threads) as pool: # parallel processing the process_line function for each ommatidium
                 results = pool.map(process_line, args_list)
             for intensity in results:
                 print(intensity) # print every intensity
@@ -98,13 +99,14 @@ def main(image_path, coordinates_file, minor_axis, rotation_angle):
         print(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        print("Usage: python script.py <input_image> <coordinates_file> <minor_axis> <rotation_angle>")
+    if len(sys.argv) != 6:
+        print("Usage: python script.py <input_image> <coordinates_file> <minor_axis> <rotation_angle> <threads>")
         sys.exit(1)
 
     input_image = sys.argv[1]
     coordinates_file = sys.argv[2]
     minor_axis = sys.argv[3]
     rotation_angle = float(sys.argv[4])
+    threads = int(sys.argv[5])
     
-    main(input_image, coordinates_file, minor_axis, rotation_angle)
+    main(input_image, coordinates_file, minor_axis, rotation_angle, threads)

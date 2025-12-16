@@ -12,6 +12,26 @@ import warnings
 from PIL import Image
 from dataclasses import dataclass
 from typing import List
+import polanalyser as pa
+import argparse
+
+def str_to_bool(value):
+    if value.lower() in {'true', 'yes', '1'}:
+        return True
+    elif value.lower() in {'false', 'no', '0'}:
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected: 'true' or 'false'.")
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "-sunvis", "--sun_visible",
+    type=str_to_bool,
+    required=True,
+    help="Set sun visibility: 'true' or 'false' (required)"
+)
+
+args = parser.parse_args()
 
 @dataclass
 class ColorConversionCode:
@@ -24,10 +44,10 @@ class ColorConversionCode:
 """
 fileformat = '.tiff'
 expos_type = 'name'#exposure is '--######us'
-edge_lim = 10#% bottom and top 10% replaced
+edge_lim = 1.56#% bottom and top 1.56% replaced
 # gamma_corr = 1.0#gamma correction for final image#N.B. sigmoid scaling now used
 #Quantile to fit within display sigmoid
-max_val = 0.999#0.95 recommended if sun or moon visible, otherwise 1.0 or 0.99
+max_val = 0.95#0.95 recommended if sun or moon visible, otherwise 1.0 or 0.99
 #lens type, fisheye or zoom
 lens_type = 'fisheye'
 
@@ -152,6 +172,7 @@ def __demosaicing_color(img_cpfa: np.ndarray, suffix: str = "") -> List[np.ndarr
 """
 
 imgs_raw  = [cv2.imread(os.path.dirname(imfile)+'/'+imfl,0) for imfl in tiffs[0]]#0 means greyscale
+
 """
 ## Check for over/underexposed pixels in middle exposure
 """
@@ -162,11 +183,30 @@ hist_mid = plt.hist(img_mid.ravel(), 256, [0,256])
 #print(np.shape(img_mid_over))
 img_mid_under = np.where(img_mid < np.round(256*(edge_lim/100))-1)
 """
-## Convert to units of pixel-byte-value/second
+## Convert to units of intensity/second
 """
-imgs_bytes_s = imgs_raw
-for ii in range(len(imgs_raw)):
-    imgs_bytes_s[ii] = np.float64(imgs_raw[ii]) / exposures[ii]
+def transform_intensity(image):
+    transformed = image.astype(np.float64)  # float for calculations
+
+    # transform pixels in range [0, 249] (linear)
+    mask1 = (image >= 0) & (image <= 249)
+    transformed[mask1] = np.where(transformed[mask1] == 0, 26.05, ((transformed[mask1] + 0.3129)/ 0.0156))
+    # we replace 0s with 26.05 because this is the average intensity that corresponds to px value 0f 0 (after solving np.round(0.0156x - 0.3129) =< 0, for x>0)
+    # y = 0.0156x - 0.3129 ## original function
+    
+    # transform pixels in range [249, 255] (sigmoid)
+    mask2 = (image >= 250) & (image <= 255)
+    transformed[mask2] = np.where(transformed[mask2] == 255, 18500.330137806803, (1.12663079e+04 - (1 / 8.24e-04) * np.log((255 / (transformed[mask2] - 0.155638819)) - 1)))
+    # the intensity prediction for px value equal to 254.5 is 18500.330137806803, so we use that as maximum intensity
+    # y = 255 / (1 + np.exp(-8.24e-04 * (x - 1.12663079e+04))) + 0.155638819   ## original function
+    return transformed
+
+# process all images
+imgs_transformed = [transform_intensity(img) for img in imgs_raw]
+
+imgs_bytes_s = imgs_transformed
+for ii in range(len(imgs_transformed)):
+    imgs_bytes_s[ii] = np.float64(imgs_transformed[ii]) / exposures[ii]
     
 """
 ## Construct single HDR image
@@ -186,7 +226,7 @@ img_HDR[(img_mid_under[0],img_mid_under[1])] = imgs_bytes_s[ind_max][(img_mid_un
 img_HDR_val = img_HDR.ravel()
 fig = plt.figure()
 ax = fig.add_subplot(111)
-HDR_histogram = np.histogram(img_HDR_val, bins = np.uint8(1e3), 
+HDR_histogram = np.histogram(img_HDR_val, bins = np.uint32(1e3), 
                              range = [0, 
                                       np.nanmax(img_HDR_val)])
 ax.set_xscale('log')
@@ -207,7 +247,7 @@ fig.savefig( os.path.dirname(imfile)+ '/HDR_histogram.pdf')
 img_mid_val = img_mid.ravel()
 fig = plt.figure()
 ax = fig.add_subplot(111)
-img_mid_histogram = np.histogram(img_mid_val, bins = np.uint8(1e3), 
+img_mid_histogram = np.histogram(img_mid_val, bins = np.uint32(1e3), 
                              range = [0, 
                                       np.nanmax(img_mid_val)])
 ax.set_xscale('log')
@@ -226,17 +266,76 @@ fig.savefig( os.path.dirname(imfile)+ '/img_mid_histogram.pdf')
 
 # HDR image demosaicing
 img_000, img_045, img_090, img_135 = demosaicing(img_HDR)
-
-cv2.imshow("img_000.png", img_000.astype(np.float64)/img_000.max())
-cv2.imshow("img_045.png", img_045.astype(np.float64)/img_045.max())
-cv2.imshow("img_090.png", img_090.astype(np.float64)/img_090.max())
-cv2.imshow("img_135.png", img_135.astype(np.float64)/img_135.max())
+demosaiced_img = demosaicing(img_HDR)
+##cv2.imshow("img_000.png", img_000.astype(np.float64)/img_000.max())
+##cv2.imshow("img_045.png", img_045.astype(np.float64)/img_045.max())
+##cv2.imshow("img_090.png", img_090.astype(np.float64)/img_090.max())
+##cv2.imshow("img_135.png", img_135.astype(np.float64)/img_135.max())
 
 # Display the final HDR image using cv2.imshow()
-cv2.imshow('Final HDR Image', img_HDR.astype(np.float64)/img_HDR.max()) # save this image when it prompts, the cv2.imwrite() doesn't work properly.
+#cv2.imshow('Final HDR Image', img_HDR.astype(np.float64)/img_HDR.max()) # save this image when it prompts, the cv2.imwrite() doesn't work properly.
 
+np.save('Final_HDR.npy', img_HDR.astype(np.float64)/img_HDR.max())
+
+np.save("img_000.npy", img_000.astype(np.float64)/img_000.max()) 
+np.save("img_045.npy", img_045.astype(np.float64)/img_045.max())
+np.save("img_090.npy", img_090.astype(np.float64)/img_090.max())
+np.save("img_135.npy", img_135.astype(np.float64)/img_135.max())
 # Wait for a key press and then close the window
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 #plt.show()
 
+if lens_type == 'fisheye' :
+    lens_radius = np.float64(img_HDR.shape[1])/2 * (1 - 80/256)
+    msk = np.empty(img_HDR.shape[:2], np.float64)
+    msk[:] = 0
+    ctr = (np.float64(img_HDR.shape[:2])+0)/2
+    #these loops are VERY slow
+    # im_coords = [[row, col] for row in range(0, img_DoLP.shape[0] - 1) for col in range(img_DoLP.shape[1] - 1)]
+    # rowcol_distance2= [(np.square(i[0]), np.square(i[1]))  for i in (np.float64(im_coords)-ctr).tolist()]
+    # ctr_distance = [(np.sqrt(i[0] + i[1]))  for i in rowcol_distance2]
+    # lens_coords = [im_coords[i] for i in lens_ind]
+    #instead, construct the coordinates using an array function
+    im_coords = np.ones( np.append(2, img_HDR.shape), dtype = np.int16)
+    im_coords[0] = im_coords[0] * np.array([range(img_HDR.shape[0])]).T
+    im_coords[1] = im_coords[1] * np.array([range(img_HDR.shape[1])])
+    im_coords = np.hstack((im_coords[0].reshape(-1, 1),
+                           im_coords[1].reshape(-1, 1)))
+    #set up a function to map onto these coordinates
+    Diag_dist  = lambda i: np.sqrt(np.square(i[0]) + np.square(i[1]))
+    #perform this function on the difference between coordinates and the centre
+    ctr_distance = np.array(list(map( Diag_dist,  
+                                     np.float64(im_coords)-ctr
+                                     )))
+    #select the indices of pixel illuminated by the lens
+    lens_ind = np.where(ctr_distance < lens_radius)[0].tolist()
+    #select those coordinates
+    lens_coords = im_coords[lens_ind]
+    #set those coordinates to one
+    msk[[i[0] for i in lens_coords], [i[1] for i in lens_coords]] = 1
+else:
+    msk = np.ones(img_HDR.shape[:2], np.float64)
+
+    
+def  Scale_sigmoid(x, inflex = 0., width = 2., rang = 0.8):
+    bx = (2*np.log((1/((1-rang)/2))-1)*(x-inflex))/width
+    yy = 1/(1+np.exp(-(bx)))
+    return(yy)
+
+# Calculate the Stokes vector per-pixel
+radians = np.array([0, np.pi/4, np.pi/2, np.pi*3/4])
+img_stokes = pa.calcStokes(demosaiced_img, radians)
+
+img_intensity = pa.cvtStokesToIntensity(img_stokes)
+img_intensity_msk = img_intensity.astype(np.float64) * msk
+nonzero = np.log10( img_intensity_msk[np.nonzero(img_intensity_msk)].ravel() )
+quantile_95 = np.percentile(nonzero, 95)
+nonzero_95 = nonzero[nonzero <= quantile_95]
+if args.sun_visible == True: # exclude the top 5% of the values, essentially filtering out the sun and very bright pixels from the scaling process
+    nonzero = nonzero_95
+img_displ_int = Scale_sigmoid( np.log10( img_intensity_msk ),
+                              inflex= np.nanmedian(nonzero),
+                              width = np.diff(np.nanquantile(nonzero, [(1-max_val)/2, 1-(1-max_val)/2])),
+                              rang = max_val)
+plt.imsave("Final_HDR_forviz.png", img_displ_int, cmap='gray', vmin=0, vmax=1)

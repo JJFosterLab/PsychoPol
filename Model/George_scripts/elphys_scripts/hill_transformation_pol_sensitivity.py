@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import sys
 from scipy.optimize import curve_fit
 
+
+# usage: python hill_transformation_pol_sensitivity.py <max_response> <min_response> <all_responses>
+
 # Hill equation
 def hill_equation(I, Emax, Khalf, n):
     return Emax * (I**n) / (I**n + Khalf**n)
@@ -73,7 +76,7 @@ plt.show()
 value1 = float(sys.argv[2])
 value2 = float(sys.argv[3])
 
-# normalization
+# normalization, see Supplementary Methods
 def normalize_mV(max_value, min_value, Emax_opt):
     mV_ratio = max_value / Emax_opt
     print(f'ratio max_response / Emax_opt: {mV_ratio}')
@@ -97,7 +100,6 @@ def normalize_mV(max_value, min_value, Emax_opt):
                 normalized_max = max_value / average_above_40
                 normalized_min = min_value / average_above_40
     elif mV_ratio < 1:
-        print('yes')
         normalized_max = max_value / Emax_opt
         normalized_min = min_value / Emax_opt
     else:
@@ -115,7 +117,7 @@ def compute_pol_sensitivity(normalized_value, Khalf_opt, n_opt):
 # max and min pol response values
 normalized_value1, normalized_value2 = normalize_mV(value1, value2, Emax_opt)
 
-# spatial sensitivity for both values
+# spatial sensitivity for both max and min values
 pol_sensitivity1 = compute_pol_sensitivity(normalized_value1, Khalf_opt, n_opt)
 if pol_sensitivity1 > 1:
     pol_sensitivity1 = 1
@@ -124,3 +126,26 @@ pol_sensitivity2 = compute_pol_sensitivity(normalized_value2, Khalf_opt, n_opt)
 print(f"max pol sensitivity: {pol_sensitivity1}")
 print(f"min pol sensitivity: {pol_sensitivity2}")
 print("pol sensitivity:", pol_sensitivity1/pol_sensitivity2)
+
+print("\n=== Processing file values ===")
+
+# txt file with multiple mV values one per line
+try:
+    with open(sys.argv[4], 'r') as f:
+        lines = f.readlines()
+
+    for idx, line in enumerate(lines):
+        line = line.strip()
+        if line == "":
+            continue
+        try:
+            val = float(line)
+            normalized_val = val / Emax_opt  # simple normalization, or extend with same logic as above
+            pol_sens = compute_pol_sensitivity(normalized_val, Khalf_opt, n_opt)
+            if pol_sens > 1:
+                pol_sens = 1
+            print(f"{pol_sens:.3f}")
+        except ValueError:
+            print(f"Line {idx+1}: Invalid value '{line}'")
+except FileNotFoundError:
+    print(f"Error: File '{txt_file_path}' not found.")
